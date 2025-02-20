@@ -1,7 +1,15 @@
 {
-  "name": "gpu-actor",
-  "version": "0.0",
-  "buildTag": "latest",
-  "dockerfile": "Dockerfile",
-  "description": "FinBERT sentiment analysis using GPU"
+  "name": "gpu-finbert-actor",
+  "version": "0.1",
+  "builds": [
+    {
+      "srcFiles": ["Dockerfile", "main.py", "requirements.txt"],
+      "useCache": true,
+      "dockerfile": "Dockerfile"
+    }
+  ],
+  "envVars": [],
+  "defaultRunOptions": {
+    "build": "latest"
+  }
 }
