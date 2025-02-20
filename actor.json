@@ -1,0 +1,7 @@
+{
+  "name": "gpu-actor",
+  "version": "0.0",
+  "buildTag": "latest",
+  "dockerfile": "Dockerfile",
+  "description": "FinBERT sentiment analysis using GPU"
+}
