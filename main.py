@@ -1,106 +1,86 @@
-# main.py
+import os
 import pandas as pd
+import requests
 from transformers import pipeline
 
-# Define macroeconomic topics with related keywords
-macro_topics = {
-    "inflation": [
-        "inflation", "flation", "cpi", "consumer price index", "product price index", 
-        "ppi", "price stability", "consumer prices", "shrinkflation", "disinflationary", 
-        "disinflation", "cost of living", "deflation", "hyperinflation", 
-        "inflation expectations", "stagflation", "headline inflation", "core inflation"
-    ],
-    "unemployment": [
-        "unemployment","job","job growth", "labor market", "labor", "wages", 
-        "employment", "jobless", "hiring", "underemployment", "workforce", "layoffs"
-    ],
-    "interest_rates": [
-        "interest rate", "fed rates","federal reserve","fedral open market committee",
-        "monetary", "monetary policy", "fomc", "rate hike", "rate cut", 
-        "quantitative easing", "qe", "quantitative tightening", "yield curve", "ffr",
-        "federal funds rate"
-    ],
-    "economic_growth": [
-        "gdp","domestic product","gnp", "gross national product","economic expansion", 
-        "recession", "growth", "economic slowdown", "stagnation", "boom and bust cycle", 
-        "business cycle", "productivity", "economic indicators"
-    ],
-    "housing": [
-        "mortgage","housing","home construction"
-    ],
-}
+# 🔹 Function to read API URLs from a text file
+def load_api_urls(file_path="dataset_urls.txt"):
+    """Reads dataset URLs from a text file (one URL per line)."""
+    if not os.path.exists(file_path):
+        print(f"⚠️ Warning: {file_path} not found. Please upload the file.")
+        return []
+    
+    with open(file_path, "r") as file:
+        urls = [line.strip() for line in file.readlines() if line.strip()]
+    return urls
 
-def classify_topic(text):
-    """
-    Assigns a macroeconomic topic to the given text 
-    by matching keywords. Returns 'other' if no match.
-    """
-    text_lower = str(text).lower()
-    for topic, keywords in macro_topics.items():
-        # If *any* keyword is in the text, return that topic
-        if any(keyword in text_lower for keyword in keywords):
-            return topic
-    return "other"
-
-def get_sentiment_score(text, sentiment_pipeline):
-    """
-    Applies FinBERT pipeline on the text and returns a
-    numerical sentiment score: +1 for positive, -1 for negative, 0 for neutral.
-    """
-    result = sentiment_pipeline(str(text))
-    label = result[0]["label"]
-    # Convert FinBERT labels to numerical sentiment scores
-    if label == "positive":
-        return 1.0
-    elif label == "negative":
-        return -1.0
+# 🔹 Function to fetch data from Apify API
+def fetch_data_from_api(url):
+    """Fetches data from a given Apify dataset API URL and converts it to a DataFrame."""
+    print(f"Fetching dataset from API: {url}")
+    response = requests.get(url)
+    
+    if response.status_code == 200:
+        data = response.json()
+        return pd.DataFrame(data)
     else:
-        return 0.0
+        print(f"⚠️ Error fetching data from {url}. Status Code: {response.status_code}")
+        return pd.DataFrame()
 
+# 🔹 Function to classify sentiment using FinBERT
+def get_sentiment_score(text, sentiment_pipeline):
+    """Applies FinBERT sentiment analysis and returns a numerical score."""
+    try:
+        result = sentiment_pipeline(str(text))
+        label = result[0]["label"]
+        # Convert FinBERT labels to numerical sentiment scores
+        if label == "positive":
+            return 1.0
+        elif label == "negative":
+            return -1.0
+        else:
+            return 0.0
+    except Exception as e:
+        print(f"Error processing text: {text[:30]}... | {str(e)}")
+        return None
+
+# 🔹 Main function to run sentiment analysis
 def main():
-    # 1) Load dataset
-    file_path = "sorted_extracted_tweet_data.csv"
-    df = pd.read_csv(file_path)
+    # ✅ Load dataset URLs from text file
+    dataset_urls = load_api_urls()
 
-    # 2) Validate columns
-    required_cols = ["fullText", "createdAt"]
-    for col in required_cols:
-        if col not in df.columns:
-            raise ValueError(f"Required column '{col}' is missing from the dataset.")
+    if not dataset_urls:
+        print("⚠️ No dataset URLs found. Exiting.")
+        return
 
-    # 3) Classify topics
-    df["topic"] = df["fullText"].apply(classify_topic)
+    all_results = []  # Store all processed datasets
 
-    # 4) Initialize FinBERT pipeline
-    #    Use device=0 to enable GPU if your environment has one available.
-    sentiment_pipeline = pipeline(
-        "text-classification", 
-        model="ProsusAI/finbert", 
-        device=0  # <== Set to 0 for GPU, -1 for CPU
-    )
+    # ✅ Initialize FinBERT sentiment pipeline with GPU support
+    sentiment_pipeline = pipeline("text-classification", model="ProsusAI/finbert", device=0)
 
-    # 5) Compute sentiment scores
-    df["sentiment_score"] = df["fullText"].apply(
-        lambda txt: get_sentiment_score(txt, sentiment_pipeline)
-    )
+    # ✅ Process each dataset from API
+    for url in dataset_urls:
+        df = fetch_data_from_api(url)
 
-    # 6) Convert 'createdAt' to date
-    df["date"] = pd.to_datetime(df["createdAt"], errors='coerce').dt.date
-    df.dropna(subset=["date"], inplace=True)  # remove invalid dates
+        # ✅ Check if data is valid
+        if df.empty or "fullText" not in df.columns:
+            print(f"⚠️ Skipping dataset {url} due to missing or empty 'fullText' column.")
+            continue
 
-    # 7) Group by topic and date, average sentiment
-    sentiment_summary = (
-        df.groupby(["topic", "date"])["sentiment_score"]
-        .mean()
-        .reset_index()
-    )
+        # ✅ Compute sentiment scores
+        df["sentiment_score"] = df["fullText"].apply(lambda txt: get_sentiment_score(txt, sentiment_pipeline))
 
-    # 8) Save results
-    output_file = "aggregated_sentiment_by_topic_finbert.csv"
-    sentiment_summary.to_csv(output_file, index=False)
+        all_results.append(df)
 
-    print("Sentiment analysis and topic classification completed.")
-    print(f"Results saved to '{output_file}'. Length: {len(sentiment_summary)} rows")
+    # ✅ Combine all processed datasets
+    if all_results:
+        final_df = pd.concat(all_results, ignore_index=True)
+        output_file = "sentiment_results_combined.csv"
+        final_df.to_csv(output_file, index=False)
+        print(f"✅ Sentiment analysis completed! Results saved to '{output_file}' ({len(final_df)} rows).")
+    else:
+        print("⚠️ No valid data processed. No output file generated.")
 
+# ✅ Run the main function
 if __name__ == "__main__":
     main()
